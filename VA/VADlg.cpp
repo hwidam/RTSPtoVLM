@@ -8,6 +8,8 @@
 #include "VADlg.h"
 #include "afxdialogex.h"
 
+#include "../common/Logger.h"
+
 #ifdef _DEBUG
 #define new DEBUG_NEW
 #endif
@@ -104,6 +106,8 @@ BOOL CVADlg::OnInitDialog()
 	//ShowWindow(SW_MINIMIZE);
 
 	// TODO: 여기에 추가 초기화 작업을 추가합니다.
+	Logger::Init("VA.exe");
+	Logger::Info("Hello from SPDLog!");
 
 	return TRUE;  // 포커스를 컨트롤에 설정하지 않으면 TRUE를 반환합니다.
 }
