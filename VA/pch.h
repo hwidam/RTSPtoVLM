@@ -9,5 +9,18 @@
 
 // 여기에 미리 컴파일하려는 헤더 추가
 #include "framework.h"
+#include <opencv2/opencv.hpp>
+#ifdef _DEBUG
+#pragma comment(lib, "opencv_core4130d.lib")
+#pragma comment(lib, "opencv_videoio4130d.lib")
+#pragma comment(lib, "opencv_imgproc4130d.lib")
+#else
+#pragma comment(lib, "opencv_core4130.lib")
+#pragma comment(lib, "opencv_videoio4130.lib")
+#pragma comment(lib, "opencv_imgproc4130.lib")
+#endif
+#include <thread>
+#include <atomic>
+#include <mutex>
 
 #endif //PCH_H

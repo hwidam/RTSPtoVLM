@@ -1,4 +1,4 @@
-﻿
+
 // VADlg.h: 헤더 파일
 //
 
@@ -30,5 +30,21 @@ protected:
 	afx_msg void OnSysCommand(UINT nID, LPARAM lParam);
 	afx_msg void OnPaint();
 	afx_msg HCURSOR OnQueryDragIcon();
+	afx_msg void OnTimer(UINT_PTR nIDEvent);
+	afx_msg void OnDestroy();
 	DECLARE_MESSAGE_MAP()
+
+public:
+	CStatic m_View;
+
+private:
+	void StartCapture(const std::string& url);
+	void StopCapture();
+	void CaptureLoop(const std::string& url);
+	void RenderFrame(const cv::Mat& frame);
+
+	std::thread        m_captureThread;
+	std::atomic<bool>  m_running{ false };
+	cv::Mat            m_frame;
+	std::mutex         m_frameMutex;
 };

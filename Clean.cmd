@@ -57,15 +57,13 @@ rem -- Directories (entire trees) ----------------------------------------------
 rem VS local cache - IntelliSense, browse DB, launch settings
 if exist .vs            rd /s /q .vs
 
-rem Build output dirs - searched recursively so per-project folders (e.g. VA\x64\) are caught too
-for /d /r . %%d in (out x64 x86 Debug Release) do (
-    if exist "%%d" rd /s /q "%%d"
-)
-
 rem .tlog directories left behind inside project build folders (e.g. VA\x64\Debug\VA.tlog\)
 for /d /r . %%d in (*.tlog) do (
     if exist "%%d" rd /s /q "%%d"
 )
+
+rem NOTE: x64/Debug/Release output dirs are intentionally NOT deleted here
+rem       so that manually placed DLLs (e.g. OpenCV) are preserved.
 
 echo Done.
 pause

@@ -9,6 +9,7 @@
 #include "afxdialogex.h"
 
 #include "../common/Logger.h"
+#include "../common/iniHandler.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -61,12 +62,15 @@ CVADlg::CVADlg(CWnd* pParent /*=nullptr*/)
 void CVADlg::DoDataExchange(CDataExchange* pDX)
 {
 	CDialogEx::DoDataExchange(pDX);
+	DDX_Control(pDX, IDC_VIEW, m_View);
 }
 
 BEGIN_MESSAGE_MAP(CVADlg, CDialogEx)
 	ON_WM_SYSCOMMAND()
 	ON_WM_PAINT()
 	ON_WM_QUERYDRAGICON()
+	ON_WM_TIMER()
+	ON_WM_DESTROY()
 END_MESSAGE_MAP()
 
 
@@ -106,8 +110,25 @@ BOOL CVADlg::OnInitDialog()
 	//ShowWindow(SW_MINIMIZE);
 
 	// TODO: 여기에 추가 초기화 작업을 추가합니다.
-	Logger::Init("VA.exe");
-	Logger::Info("Hello from SPDLog!");
+	Logger::Init("VA");
+
+	if (IniHandler::Load())
+	{
+		const auto& rtspList = IniHandler::GetRtspList();
+		Logger::Info("Loaded {} RTSP server(s)", rtspList.size());
+
+		if (!rtspList.empty())
+		{
+			std::string url = rtspList[0].BuildUri();
+			Logger::Info("Connecting to {}", url);
+			StartCapture(url);
+			SetTimer(1, 33, nullptr); // ~30 fps
+		}
+	}
+	else
+	{
+		Logger::Warn("config.ini not found or failed to load");
+	}
 
 	return TRUE;  // 포커스를 컨트롤에 설정하지 않으면 TRUE를 반환합니다.
 }
@@ -159,5 +180,121 @@ void CVADlg::OnPaint()
 HCURSOR CVADlg::OnQueryDragIcon()
 {
 	return static_cast<HCURSOR>(m_hIcon);
+}
+
+void CVADlg::StartCapture(const std::string& url)
+{
+	StopCapture();
+	m_running = true;
+	m_captureThread = std::thread([this, url]() { CaptureLoop(url); });
+}
+
+void CVADlg::StopCapture()
+{
+	m_running = false;
+	if (m_captureThread.joinable())
+		m_captureThread.join();
+}
+
+void CVADlg::CaptureLoop(const std::string& url)
+{
+	// ── Step 1: verify FFmpeg is in this OpenCV build ─────────────────────
+	std::string buildInfo = cv::getBuildInformation();
+	bool hasFFmpeg = buildInfo.find("FFMPEG:                      YES") != std::string::npos;
+	Logger::Info("OpenCV {} | FFMPEG backend: {}", CV_VERSION, hasFFmpeg ? "YES" : "NO");
+
+	if (!hasFFmpeg)
+	{
+		Logger::Error("OpenCV was built without FFMPEG — RTSP not supported. Rebuild with -DWITH_FFMPEG=ON");
+		return;
+	}
+
+	// ── Step 2: force TCP transport via environment variable ─────────────
+	_putenv_s("OPENCV_FFMPEG_CAPTURE_OPTIONS", "rtsp_transport;tcp");
+
+	cv::VideoCapture cap;
+	cv::Mat frame;
+
+	while (m_running)
+	{
+		Logger::Info("Connecting to RTSP stream ...");
+		cap.open(url, cv::CAP_FFMPEG);
+
+		if (!cap.isOpened())
+		{
+			Logger::Error("Failed to open stream — retrying in 5s");
+			for (int i = 0; i < 50 && m_running; ++i)
+				std::this_thread::sleep_for(std::chrono::milliseconds(100));
+			continue;
+		}
+
+		Logger::Info("Stream opened | {}x{} @ {:.1f}fps",
+			(int)cap.get(cv::CAP_PROP_FRAME_WIDTH),
+			(int)cap.get(cv::CAP_PROP_FRAME_HEIGHT),
+			cap.get(cv::CAP_PROP_FPS));
+
+		while (m_running)
+		{
+			if (!cap.read(frame) || frame.empty())
+			{
+				Logger::Warn("Frame read failed — reconnecting ...");
+				break;
+			}
+			std::lock_guard<std::mutex> lock(m_frameMutex);
+			cv::swap(m_frame, frame);
+		}
+
+		cap.release();
+	}
+}
+
+void CVADlg::RenderFrame(const cv::Mat& frame)
+{
+	CRect rect;
+	m_View.GetClientRect(&rect);
+	if (rect.IsRectEmpty())
+		return;
+
+	// OpenCV Mat is BGR — same byte order Windows DIB expects, no conversion needed
+	const cv::Mat& src = frame.isContinuous() ? frame : frame.clone();
+
+	BITMAPINFOHEADER bi{};
+	bi.biSize        = sizeof(bi);
+	bi.biWidth       = src.cols;
+	bi.biHeight      = -src.rows; // negative = top-down
+	bi.biPlanes      = 1;
+	bi.biBitCount    = 24;
+	bi.biCompression = BI_RGB;
+
+	CDC* pDC = m_View.GetDC();
+	StretchDIBits(pDC->GetSafeHdc(),
+		0, 0, rect.Width(), rect.Height(),
+		0, 0, src.cols, src.rows,
+		src.data, reinterpret_cast<BITMAPINFO*>(&bi),
+		DIB_RGB_COLORS, SRCCOPY);
+	m_View.ReleaseDC(pDC);
+}
+
+void CVADlg::OnTimer(UINT_PTR nIDEvent)
+{
+	if (nIDEvent == 1)
+	{
+		cv::Mat frame;
+		{
+			std::lock_guard<std::mutex> lock(m_frameMutex);
+			if (!m_frame.empty())
+				m_frame.copyTo(frame);
+		}
+		if (!frame.empty())
+			RenderFrame(frame);
+	}
+	CDialogEx::OnTimer(nIDEvent);
+}
+
+void CVADlg::OnDestroy()
+{
+	KillTimer(1);
+	StopCapture();
+	CDialogEx::OnDestroy();
 }
 
