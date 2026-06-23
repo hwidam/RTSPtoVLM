@@ -8,8 +8,11 @@
 #include "VADlg.h"
 #include "afxdialogex.h"
 
+#include <filesystem>
+
 #include "../common/Logger.h"
 #include "../common/iniHandler.h"
+
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -130,6 +133,8 @@ BOOL CVADlg::OnInitDialog()
 		Logger::Warn("config.ini not found or failed to load");
 	}
 
+	InitVLM();
+
 	return TRUE;  // 포커스를 컨트롤에 설정하지 않으면 TRUE를 반환합니다.
 }
 
@@ -180,6 +185,25 @@ void CVADlg::OnPaint()
 HCURSOR CVADlg::OnQueryDragIcon()
 {
 	return static_cast<HCURSOR>(m_hIcon);
+}
+
+void CVADlg::InitVLM()
+{
+	m_pVLMInference = new VLMInference();
+
+	if (m_pVLMInference != nullptr)
+	{
+		wchar_t buf[MAX_PATH];
+		GetModuleFileNameW(nullptr, buf, MAX_PATH);
+		std::filesystem::path exePath(buf);
+
+		// <exe dir>/model/
+		auto modelDir = exePath.parent_path() / "model\\";
+
+		std::string modelPath = modelDir.string() + "llava-v1.6-mistral-7b.Q4_K_M.gguf";
+		std::string mmprojPath = modelDir.string() + "mmproj-model-f16.gguf";
+		m_pVLMInference->Init(modelPath, mmprojPath);
+	}
 }
 
 void CVADlg::StartCapture(const std::string& url)
@@ -286,7 +310,11 @@ void CVADlg::OnTimer(UINT_PTR nIDEvent)
 				m_frame.copyTo(frame);
 		}
 		if (!frame.empty())
+		{
+			//here
+			m_pVLMInference->Push(frame, "write text written on image");
 			RenderFrame(frame);
+		}
 	}
 	CDialogEx::OnTimer(nIDEvent);
 }

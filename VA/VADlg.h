@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include "VLMInference.h"
 
 // CVADlg 대화 상자
 class CVADlg : public CDialogEx
@@ -36,6 +37,8 @@ protected:
 
 public:
 	CStatic m_View;
+	VLMInference* m_pVLMInference = nullptr;
+	void InitVLM();
 
 private:
 	void StartCapture(const std::string& url);

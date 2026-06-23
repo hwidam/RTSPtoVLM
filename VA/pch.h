@@ -19,6 +19,13 @@
 #pragma comment(lib, "opencv_videoio4130.lib")
 #pragma comment(lib, "opencv_imgproc4130.lib")
 #endif
+
+#pragma comment(lib, "llama.lib")
+#pragma comment(lib, "mtmd.lib")
+#pragma comment(lib, "ggml.lib")
+#pragma comment(lib, "ggml-base.lib")
+#pragma comment(lib, "llama-common.lib")
+
 #include <thread>
 #include <atomic>
 #include <mutex>
