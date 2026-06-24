@@ -10,8 +10,11 @@ Receive RTSP stream data, decode, apply VLM, extract Data from Image
 ### Framework
 - MFC
 ### Libraries
-- opencv 4.13.0
-- llama.cpp
+- opencv 4.13.0( https://github.com/opencv/opencv )
+- llama.cpp( https://github.com/ggml-org/llama.cpp )
+### OpenSources
+- spdlog( https://github.com/gabime/spdlog )
+- simpleini( https://github.com/brofield/simpleini )
 ### Development Tools
 - Git (Git Extensions)
 - Visual Studio 2022
