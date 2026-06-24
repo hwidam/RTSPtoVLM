@@ -6,9 +6,12 @@ MinimumVisualStudioVersion = 10.0.40219.1
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "VA", "VA\VA.vcxproj", "{982478DC-F2D1-FEA0-FA07-627CD46CAC92}"
 	ProjectSection(ProjectDependencies) = postProject
 		{D17B107A-14F8-4383-9D4B-39D40D46352A} = {D17B107A-14F8-4383-9D4B-39D40D46352A}
+		{F23213C1-31F1-44F2-85B6-3F3DC21DEB38} = {F23213C1-31F1-44F2-85B6-3F3DC21DEB38}
 	EndProjectSection
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "common", "common\common.vcxproj", "{D17B107A-14F8-4383-9D4B-39D40D46352A}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "RTSPReceiver", "RTSPReceiver\RTSPReceiver.vcxproj", "{F23213C1-31F1-44F2-85B6-3F3DC21DEB38}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -34,6 +37,14 @@ Global
 		{D17B107A-14F8-4383-9D4B-39D40D46352A}.Release|x64.Build.0 = Release|x64
 		{D17B107A-14F8-4383-9D4B-39D40D46352A}.Release|x86.ActiveCfg = Release|Win32
 		{D17B107A-14F8-4383-9D4B-39D40D46352A}.Release|x86.Build.0 = Release|Win32
+		{F23213C1-31F1-44F2-85B6-3F3DC21DEB38}.Debug|x64.ActiveCfg = Debug|x64
+		{F23213C1-31F1-44F2-85B6-3F3DC21DEB38}.Debug|x64.Build.0 = Debug|x64
+		{F23213C1-31F1-44F2-85B6-3F3DC21DEB38}.Debug|x86.ActiveCfg = Debug|Win32
+		{F23213C1-31F1-44F2-85B6-3F3DC21DEB38}.Debug|x86.Build.0 = Debug|Win32
+		{F23213C1-31F1-44F2-85B6-3F3DC21DEB38}.Release|x64.ActiveCfg = Release|x64
+		{F23213C1-31F1-44F2-85B6-3F3DC21DEB38}.Release|x64.Build.0 = Release|x64
+		{F23213C1-31F1-44F2-85B6-3F3DC21DEB38}.Release|x86.ActiveCfg = Release|Win32
+		{F23213C1-31F1-44F2-85B6-3F3DC21DEB38}.Release|x86.Build.0 = Release|Win32
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

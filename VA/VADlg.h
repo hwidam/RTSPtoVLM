@@ -5,6 +5,7 @@
 #pragma once
 
 #include "VLMInference.h"
+#include "../common/SharedMemory.h"
 
 // CVADlg 대화 상자
 class CVADlg : public CDialogEx
@@ -41,12 +42,20 @@ public:
 	void InitVLM();
 
 private:
-	void StartCapture(const std::string& url);
-	void StopCapture();
-	void CaptureLoop(const std::string& url);
+	// ── RTSPReceiver child process ────────────────────────────────────────────
+	void LaunchReceiver(const std::string& url, const std::string& shmName);
+	void StopReceiver();
+
+	// ── Shared memory reader thread ───────────────────────────────────────────
+	void StartShmReader(const std::string& shmName);
+	void StopShmReader();
+	void ShmReadLoop(const std::string& shmName);
+
 	void RenderFrame(const cv::Mat& frame);
 
-	std::thread        m_captureThread;
+	HANDLE             m_hReceiverProcess = INVALID_HANDLE_VALUE;
+	SharedMemory       m_shm;
+	std::thread        m_shmThread;
 	std::atomic<bool>  m_running{ false };
 	cv::Mat            m_frame;
 	std::mutex         m_frameMutex;

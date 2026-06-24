@@ -1,4 +1,4 @@
-﻿
+
 // VADlg.cpp: 구현 파일
 //
 
@@ -12,6 +12,7 @@
 
 #include "../common/Logger.h"
 #include "../common/iniHandler.h"
+#include "../common/FrameTypes.h"
 
 
 #ifdef _DEBUG
@@ -84,8 +85,6 @@ BOOL CVADlg::OnInitDialog()
 	CDialogEx::OnInitDialog();
 
 	// 시스템 메뉴에 "정보..." 메뉴 항목을 추가합니다.
-
-	// IDM_ABOUTBOX는 시스템 명령 범위에 있어야 합니다.
 	ASSERT((IDM_ABOUTBOX & 0xFFF0) == IDM_ABOUTBOX);
 	ASSERT(IDM_ABOUTBOX < 0xF000);
 
@@ -103,16 +102,9 @@ BOOL CVADlg::OnInitDialog()
 		}
 	}
 
-	// 이 대화 상자의 아이콘을 설정합니다.  응용 프로그램의 주 창이 대화 상자가 아닐 경우에는
-	//  프레임워크가 이 작업을 자동으로 수행합니다.
-	SetIcon(m_hIcon, TRUE);			// 큰 아이콘을 설정합니다.
-	SetIcon(m_hIcon, FALSE);		// 작은 아이콘을 설정합니다.
+	SetIcon(m_hIcon, TRUE);
+	SetIcon(m_hIcon, FALSE);
 
-	//ShowWindow(SW_MAXIMIZE);
-
-	//ShowWindow(SW_MINIMIZE);
-
-	// TODO: 여기에 추가 초기화 작업을 추가합니다.
 	Logger::Init("VA");
 
 	if (IniHandler::Load())
@@ -122,10 +114,13 @@ BOOL CVADlg::OnInitDialog()
 
 		if (!rtspList.empty())
 		{
+			const std::string shmName = "RtspFrame";
 			std::string url = rtspList[0].BuildUri();
-			Logger::Info("Connecting to {}", url);
-			StartCapture(url);
-			SetTimer(1, 33, nullptr); // ~30 fps
+			Logger::Info("Launching RTSPReceiver for {}", url);
+
+			LaunchReceiver(url, shmName);
+			StartShmReader(shmName);
+			SetTimer(1, 33, nullptr); // ~30 fps render timer
 		}
 	}
 	else
@@ -135,7 +130,7 @@ BOOL CVADlg::OnInitDialog()
 
 	InitVLM();
 
-	return TRUE;  // 포커스를 컨트롤에 설정하지 않으면 TRUE를 반환합니다.
+	return TRUE;
 }
 
 void CVADlg::OnSysCommand(UINT nID, LPARAM lParam)
@@ -151,27 +146,18 @@ void CVADlg::OnSysCommand(UINT nID, LPARAM lParam)
 	}
 }
 
-// 대화 상자에 최소화 단추를 추가할 경우 아이콘을 그리려면
-//  아래 코드가 필요합니다.  문서/뷰 모델을 사용하는 MFC 애플리케이션의 경우에는
-//  프레임워크에서 이 작업을 자동으로 수행합니다.
-
 void CVADlg::OnPaint()
 {
 	if (IsIconic())
 	{
-		CPaintDC dc(this); // 그리기를 위한 디바이스 컨텍스트입니다.
-
+		CPaintDC dc(this);
 		SendMessage(WM_ICONERASEBKGND, reinterpret_cast<WPARAM>(dc.GetSafeHdc()), 0);
-
-		// 클라이언트 사각형에서 아이콘을 가운데에 맞춥니다.
 		int cxIcon = GetSystemMetrics(SM_CXICON);
 		int cyIcon = GetSystemMetrics(SM_CYICON);
 		CRect rect;
 		GetClientRect(&rect);
 		int x = (rect.Width() - cxIcon + 1) / 2;
 		int y = (rect.Height() - cyIcon + 1) / 2;
-
-		// 아이콘을 그립니다.
 		dc.DrawIcon(x, y, m_hIcon);
 	}
 	else
@@ -180,106 +166,108 @@ void CVADlg::OnPaint()
 	}
 }
 
-// 사용자가 최소화된 창을 끄는 동안에 커서가 표시되도록 시스템에서
-//  이 함수를 호출합니다.
 HCURSOR CVADlg::OnQueryDragIcon()
 {
 	return static_cast<HCURSOR>(m_hIcon);
 }
 
-void CVADlg::InitVLM()
-{
-	m_pVLMInference = new VLMInference();
+// ── RTSPReceiver process ──────────────────────────────────────────────────────
 
-	if (m_pVLMInference != nullptr)
+void CVADlg::LaunchReceiver(const std::string& url, const std::string& shmName)
+{
+	// Resolve RTSPReceiver.exe path: same directory as VA.exe
+	wchar_t vaBuf[MAX_PATH];
+	GetModuleFileNameW(nullptr, vaBuf, MAX_PATH);
+	std::filesystem::path recvExe =
+		std::filesystem::path(vaBuf).parent_path() / "RTSPReceiver.exe";
+
+	// CreateProcessA needs a mutable char buffer for the command line
+	std::string cmdLine = "\"" + recvExe.string() + "\" \""
+	                    + url + "\" " + shmName;
+
+	STARTUPINFOA si{};
+	si.cb = sizeof(si);
+	PROCESS_INFORMATION pi{};
+
+	if (!CreateProcessA(nullptr, cmdLine.data(),
+	                    nullptr, nullptr, FALSE, 0,
+	                    nullptr, nullptr, &si, &pi))
 	{
-		wchar_t buf[MAX_PATH];
-		GetModuleFileNameW(nullptr, buf, MAX_PATH);
-		std::filesystem::path exePath(buf);
-
-		// <exe dir>/model/
-		auto modelDir = exePath.parent_path() / "model\\";
-
-		std::string modelPath = modelDir.string() + "llava-v1.6-mistral-7b.Q4_K_M.gguf";
-		std::string mmprojPath = modelDir.string() + "mmproj-model-f16.gguf";
-		m_pVLMInference->Init(modelPath, mmprojPath);
-	}
-}
-
-void CVADlg::StartCapture(const std::string& url)
-{
-	StopCapture();
-	m_running = true;
-	m_captureThread = std::thread([this, url]() { CaptureLoop(url); });
-}
-
-void CVADlg::StopCapture()
-{
-	m_running = false;
-	if (m_captureThread.joinable())
-		m_captureThread.join();
-}
-
-void CVADlg::CaptureLoop(const std::string& url)
-{
-	// ── Step 1: verify FFmpeg is in this OpenCV build ─────────────────────
-	std::string buildInfo = cv::getBuildInformation();
-	bool hasFFmpeg = buildInfo.find("FFMPEG:                      YES") != std::string::npos;
-	Logger::Info("OpenCV {} | FFMPEG backend: {}", CV_VERSION, hasFFmpeg ? "YES" : "NO");
-
-	if (!hasFFmpeg)
-	{
-		Logger::Error("OpenCV was built without FFMPEG — RTSP not supported. Rebuild with -DWITH_FFMPEG=ON");
+		Logger::Error("LaunchReceiver: CreateProcess failed (error {})", GetLastError());
 		return;
 	}
 
-	// ── Step 2: force TCP transport via environment variable ─────────────
-	_putenv_s("OPENCV_FFMPEG_CAPTURE_OPTIONS", "rtsp_transport;tcp");
+	m_hReceiverProcess = pi.hProcess;
+	CloseHandle(pi.hThread);
+	Logger::Info("LaunchReceiver: PID {} started", pi.dwProcessId);
+}
 
-	cv::VideoCapture cap;
-	cv::Mat frame;
+void CVADlg::StopReceiver()
+{
+	if (m_hReceiverProcess == INVALID_HANDLE_VALUE) return;
 
+	TerminateProcess(m_hReceiverProcess, 0);
+	WaitForSingleObject(m_hReceiverProcess, 3000);
+	CloseHandle(m_hReceiverProcess);
+	m_hReceiverProcess = INVALID_HANDLE_VALUE;
+	Logger::Info("StopReceiver: process terminated");
+}
+
+// ── Shared memory reader ──────────────────────────────────────────────────────
+
+void CVADlg::StartShmReader(const std::string& shmName)
+{
+	StopShmReader();
+	m_running = true;
+	m_shmThread = std::thread([this, shmName]() { ShmReadLoop(shmName); });
+}
+
+void CVADlg::StopShmReader()
+{
+	m_running = false;
+	if (m_shmThread.joinable())
+		m_shmThread.join();
+}
+
+void CVADlg::ShmReadLoop(const std::string& shmName)
+{
+	// Wait until RTSPReceiver has created the shared memory segment
+	while (m_running && !m_shm.Open(shmName)) {
+		Logger::Info("ShmReadLoop: waiting for '{}' ...", shmName);
+		std::this_thread::sleep_for(std::chrono::milliseconds(500));
+	}
+
+	if (!m_running) return;
+	Logger::Info("ShmReadLoop: connected to '{}'", shmName);
+
+	ShmPacket pkt{};
 	while (m_running)
 	{
-		Logger::Info("Connecting to RTSP stream ...");
-		cap.open(url, cv::CAP_FFMPEG);
-
-		if (!cap.isOpened())
-		{
-			Logger::Error("Failed to open stream — retrying in 5s");
-			for (int i = 0; i < 50 && m_running; ++i)
-				std::this_thread::sleep_for(std::chrono::milliseconds(100));
+		if (!m_shm.WaitAndPop(pkt, 33))  // 33 ms timeout, non-blocking on idle
 			continue;
-		}
 
-		Logger::Info("Stream opened | {}x{} @ {:.1f}fps",
-			(int)cap.get(cv::CAP_PROP_FRAME_WIDTH),
-			(int)cap.get(cv::CAP_PROP_FRAME_HEIGHT),
-			cap.get(cv::CAP_PROP_FPS));
+		const auto* h = pkt.As<ShmFrameHeader>();
+		if (!h || pkt.size < sizeof(ShmFrameHeader)) continue;
 
-		while (m_running)
-		{
-			if (!cap.read(frame) || frame.empty())
-			{
-				Logger::Warn("Frame read failed — reconnecting ...");
-				break;
-			}
-			std::lock_guard<std::mutex> lock(m_frameMutex);
-			cv::swap(m_frame, frame);
-		}
+		// Wrap the copied pixel data in a Mat and clone into m_frame
+		cv::Mat received(h->height, h->width, CV_8UC3,
+		                 pkt.data + sizeof(ShmFrameHeader));
 
-		cap.release();
+		std::lock_guard<std::mutex> lock(m_frameMutex);
+		received.copyTo(m_frame);
 	}
+
+	m_shm.Close();
 }
+
+// ── Rendering ─────────────────────────────────────────────────────────────────
 
 void CVADlg::RenderFrame(const cv::Mat& frame)
 {
 	CRect rect;
 	m_View.GetClientRect(&rect);
-	if (rect.IsRectEmpty())
-		return;
+	if (rect.IsRectEmpty()) return;
 
-	// OpenCV Mat is BGR — same byte order Windows DIB expects, no conversion needed
 	const cv::Mat& src = frame.isContinuous() ? frame : frame.clone();
 
 	BITMAPINFOHEADER bi{};
@@ -299,6 +287,8 @@ void CVADlg::RenderFrame(const cv::Mat& frame)
 	m_View.ReleaseDC(pDC);
 }
 
+// ── Timer (~30 fps) ───────────────────────────────────────────────────────────
+
 void CVADlg::OnTimer(UINT_PTR nIDEvent)
 {
 	if (nIDEvent == 1)
@@ -311,7 +301,6 @@ void CVADlg::OnTimer(UINT_PTR nIDEvent)
 		}
 		if (!frame.empty())
 		{
-			//here
 			m_pVLMInference->Push(frame, "write text written on image");
 			RenderFrame(frame);
 		}
@@ -319,10 +308,32 @@ void CVADlg::OnTimer(UINT_PTR nIDEvent)
 	CDialogEx::OnTimer(nIDEvent);
 }
 
+// ── Shutdown ──────────────────────────────────────────────────────────────────
+
 void CVADlg::OnDestroy()
 {
 	KillTimer(1);
-	StopCapture();
+	StopShmReader();   // joins background thread, closes m_shm
+	StopReceiver();    // terminates RTSPReceiver.exe
 	CDialogEx::OnDestroy();
 }
 
+// ── VLM ──────────────────────────────────────────────────────────────────────
+
+void CVADlg::InitVLM()
+{
+	m_pVLMInference = new VLMInference();
+
+	if (m_pVLMInference != nullptr)
+	{
+		wchar_t buf[MAX_PATH];
+		GetModuleFileNameW(nullptr, buf, MAX_PATH);
+		std::filesystem::path exePath(buf);
+
+		auto modelDir = exePath.parent_path() / "model\\";
+
+		std::string modelPath  = modelDir.string() + "llava-v1.6-mistral-7b.Q4_K_M.gguf";
+		std::string mmprojPath = modelDir.string() + "mmproj-model-f16.gguf";
+		m_pVLMInference->Init(modelPath, mmprojPath);
+	}
+}
