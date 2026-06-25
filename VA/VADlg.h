@@ -53,10 +53,9 @@ private:
 	// ── Shared memory reader thread ───────────────────────────────────────────
 	void StartShmReader(const std::string& shmName);
 	void StopShmReader();
-	void ShmReadLoop(const std::string& shmName);	void RenderFrame(const cv::Mat& frame);
+	void ShmReadLoop(const std::string& shmName);
 
 	void RenderToView(CStatic& view, const cv::Mat& frame);
-	void RenderFrame(const cv::Mat& frame);
 	
 	HANDLE             m_hReceiverProcess = INVALID_HANDLE_VALUE;
 	SharedMemory       m_shm;

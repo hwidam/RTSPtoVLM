@@ -11,7 +11,6 @@
 #define IDC_GROUP_LIVE                  1001
 #define IDC_GROUP_RESULT                1002
 #define IDC_VIEW_RESULT                 1003
-#define IDC_EDIT1                       1004
 #define IDC_EDIT_RESULT                 1004
 
 // Next default values for new objects

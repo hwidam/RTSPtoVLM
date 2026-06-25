@@ -343,15 +343,16 @@ void CVADlg::InitVLM()
 		std::string modelPath = modelDir.string() + "llava-v1.6-mistral-7b.Q4_K_M.gguf";
 		std::string mmprojPath = modelDir.string() + "mmproj-model-f16.gguf";
 		m_pVLMInference->Init(modelPath, mmprojPath);
+		m_pVLMInference->SetNotifyWnd(GetSafeHwnd());
 	}
 }
 
 
-void CVADlg::RenderFrame(const cv::Mat& frame)
+void CVADlg::RenderToView(CStatic& view, const cv::Mat& frame)
 {
 	CRect rect;
-	m_View.GetClientRect(&rect);
-	if (rect.IsRectEmpty())
+	view.GetClientRect(&rect);
+	if (rect.IsRectEmpty() || frame.empty())
 		return;
 
 	// OpenCV Mat is BGR — same byte order Windows DIB expects, no conversion needed
@@ -365,14 +366,16 @@ void CVADlg::RenderFrame(const cv::Mat& frame)
 	bi.biBitCount    = 24;
 	bi.biCompression = BI_RGB;
 
-	CDC* pDC = m_View.GetDC();
+	CDC* pDC = view.GetDC();
 	StretchDIBits(pDC->GetSafeHdc(),
 		0, 0, rect.Width(), rect.Height(),
 		0, 0, src.cols, src.rows,
 		src.data, reinterpret_cast<BITMAPINFO*>(&bi),
 		DIB_RGB_COLORS, SRCCOPY);
-	m_View.ReleaseDC(pDC);
+	view.ReleaseDC(pDC);
 }
+
+
 
 // ── Timer (~30 fps) ───────────────────────────────────────────────────────────
 
@@ -388,9 +391,10 @@ void CVADlg::OnTimer(UINT_PTR nIDEvent)
 		}
 		if (!frame.empty())
 		{
-			//here
-			m_pVLMInference->Push(frame, "write text written on image");
-			RenderFrame(frame);
+			if (m_pVLMInference && m_pVLMInference->IsReady() && !m_pVLMInference->IsBusy())
+				m_pVLMInference->Push(frame, "write text written on image");
+
+			RenderToView(m_ViewLive, frame);
 		}
 	}
 	CDialogEx::OnTimer(nIDEvent);
