@@ -12,6 +12,7 @@
 
 #include "../common/Logger.h"
 #include "../common/iniHandler.h"
+#include "../common/FrameTypes.h"
 
 
 #ifdef _DEBUG
@@ -126,10 +127,13 @@ BOOL CVADlg::OnInitDialog()
 
 		if (!rtspList.empty())
 		{
+			const std::string shmName = "RtspFrame";
 			std::string url = rtspList[0].BuildUri();
-			Logger::Info("Connecting to {}", url);
-			StartCapture(url);
-			SetTimer(1, 33, nullptr); // ~30 fps
+			Logger::Info("Launching RTSPReceiver for {}", url);
+
+			LaunchReceiver(url, shmName);
+			StartShmReader(shmName);
+			SetTimer(1, 33, nullptr); // ~30 fps render timer
 		}
 	}
 	else
@@ -191,6 +195,96 @@ HCURSOR CVADlg::OnQueryDragIcon()
 	return static_cast<HCURSOR>(m_hIcon);
 }
 
+// ── RTSPReceiver process ──────────────────────────────────────────────────────
+
+void CVADlg::LaunchReceiver(const std::string& url, const std::string& shmName)
+{
+	// Resolve RTSPReceiver.exe path: same directory as VA.exe
+	wchar_t vaBuf[MAX_PATH];
+	GetModuleFileNameW(nullptr, vaBuf, MAX_PATH);
+	std::filesystem::path recvExe =
+		std::filesystem::path(vaBuf).parent_path() / "RTSPReceiver.exe";
+
+	// CreateProcessA needs a mutable char buffer for the command line
+	std::string cmdLine = "\"" + recvExe.string() + "\" \""
+	                    + url + "\" " + shmName;
+
+	STARTUPINFOA si{};
+	si.cb = sizeof(si);
+	PROCESS_INFORMATION pi{};
+
+	if (!CreateProcessA(nullptr, cmdLine.data(),
+	                    nullptr, nullptr, FALSE, 0,
+	                    nullptr, nullptr, &si, &pi))
+	{
+		Logger::Error("LaunchReceiver: CreateProcess failed (error {})", GetLastError());
+		return;
+	}
+
+	m_hReceiverProcess = pi.hProcess;
+	CloseHandle(pi.hThread);
+	Logger::Info("LaunchReceiver: PID {} started", pi.dwProcessId);
+}
+
+void CVADlg::StopReceiver()
+{
+	if (m_hReceiverProcess == INVALID_HANDLE_VALUE) return;
+
+	TerminateProcess(m_hReceiverProcess, 0);
+	WaitForSingleObject(m_hReceiverProcess, 3000);
+	CloseHandle(m_hReceiverProcess);
+	m_hReceiverProcess = INVALID_HANDLE_VALUE;
+	Logger::Info("StopReceiver: process terminated");
+}
+
+// ── Shared memory reader ──────────────────────────────────────────────────────
+
+void CVADlg::StartShmReader(const std::string& shmName)
+{
+	StopShmReader();
+	m_running = true;
+	m_shmThread = std::thread([this, shmName]() { ShmReadLoop(shmName); });
+}
+
+void CVADlg::StopShmReader()
+{
+	m_running = false;
+	if (m_shmThread.joinable())
+		m_shmThread.join();
+}
+
+void CVADlg::ShmReadLoop(const std::string& shmName)
+{
+	// Wait until RTSPReceiver has created the shared memory segment
+	while (m_running && !m_shm.Open(shmName)) {
+		Logger::Info("ShmReadLoop: waiting for '{}' ...", shmName);
+		std::this_thread::sleep_for(std::chrono::milliseconds(500));
+	}
+
+	if (!m_running) return;
+	Logger::Info("ShmReadLoop: connected to '{}'", shmName);
+
+	ShmPacket pkt{};
+	while (m_running)
+	{
+		if (!m_shm.WaitAndPop(pkt, 33))  // 33 ms timeout, non-blocking on idle
+			continue;
+
+		const auto* h = pkt.As<ShmFrameHeader>();
+		if (!h || pkt.size < sizeof(ShmFrameHeader)) continue;
+
+		// Wrap the copied pixel data in a Mat and clone into m_frame
+		cv::Mat received(h->height, h->width, CV_8UC3,
+		                 pkt.data + sizeof(ShmFrameHeader));
+
+		std::lock_guard<std::mutex> lock(m_frameMutex);
+		received.copyTo(m_frame);
+	}
+
+	m_shm.Close();
+}
+
+
 void CVADlg::InitControl()
 {
 	const int nMargin  = 10;
@@ -249,81 +343,15 @@ void CVADlg::InitVLM()
 		std::string modelPath = modelDir.string() + "llava-v1.6-mistral-7b.Q4_K_M.gguf";
 		std::string mmprojPath = modelDir.string() + "mmproj-model-f16.gguf";
 		m_pVLMInference->Init(modelPath, mmprojPath);
-		m_pVLMInference->SetNotifyWnd(GetSafeHwnd());
 	}
 }
 
-void CVADlg::StartCapture(const std::string& url)
-{
-	StopCapture();
-	m_running = true;
-	m_captureThread = std::thread([this, url]() { CaptureLoop(url); });
-}
 
-void CVADlg::StopCapture()
-{
-	m_running = false;
-	if (m_captureThread.joinable())
-		m_captureThread.join();
-}
-
-void CVADlg::CaptureLoop(const std::string& url)
-{
-	// ── Step 1: verify FFmpeg is in this OpenCV build ─────────────────────
-	std::string buildInfo = cv::getBuildInformation();
-	bool hasFFmpeg = buildInfo.find("FFMPEG:                      YES") != std::string::npos;
-	Logger::Info("OpenCV {} | FFMPEG backend: {}", CV_VERSION, hasFFmpeg ? "YES" : "NO");
-
-	if (!hasFFmpeg)
-	{
-		Logger::Error("OpenCV was built without FFMPEG — RTSP not supported. Rebuild with -DWITH_FFMPEG=ON");
-		return;
-	}
-
-	// ── Step 2: force TCP transport via environment variable ─────────────
-	_putenv_s("OPENCV_FFMPEG_CAPTURE_OPTIONS", "rtsp_transport;tcp");
-
-	cv::VideoCapture cap;
-	cv::Mat frame;
-
-	while (m_running)
-	{
-		Logger::Info("Connecting to RTSP stream ...");
-		cap.open(url, cv::CAP_FFMPEG);
-
-		if (!cap.isOpened())
-		{
-			Logger::Error("Failed to open stream — retrying in 5s");
-			for (int i = 0; i < 50 && m_running; ++i)
-				std::this_thread::sleep_for(std::chrono::milliseconds(100));
-			continue;
-		}
-
-		Logger::Info("Stream opened | {}x{} @ {:.1f}fps",
-			(int)cap.get(cv::CAP_PROP_FRAME_WIDTH),
-			(int)cap.get(cv::CAP_PROP_FRAME_HEIGHT),
-			cap.get(cv::CAP_PROP_FPS));
-
-		while (m_running)
-		{
-			if (!cap.read(frame) || frame.empty())
-			{
-				Logger::Warn("Frame read failed — reconnecting ...");
-				break;
-			}
-			std::lock_guard<std::mutex> lock(m_frameMutex);
-			cv::swap(m_frame, frame);
-		}
-
-		cap.release();
-	}
-}
-
-void CVADlg::RenderToView(CStatic& view, const cv::Mat& frame)
+void CVADlg::RenderFrame(const cv::Mat& frame)
 {
 	CRect rect;
-	view.GetClientRect(&rect);
-	if (rect.IsRectEmpty() || frame.empty())
+	m_View.GetClientRect(&rect);
+	if (rect.IsRectEmpty())
 		return;
 
 	// OpenCV Mat is BGR — same byte order Windows DIB expects, no conversion needed
@@ -337,19 +365,16 @@ void CVADlg::RenderToView(CStatic& view, const cv::Mat& frame)
 	bi.biBitCount    = 24;
 	bi.biCompression = BI_RGB;
 
-	CDC* pDC = view.GetDC();
+	CDC* pDC = m_View.GetDC();
 	StretchDIBits(pDC->GetSafeHdc(),
 		0, 0, rect.Width(), rect.Height(),
 		0, 0, src.cols, src.rows,
 		src.data, reinterpret_cast<BITMAPINFO*>(&bi),
 		DIB_RGB_COLORS, SRCCOPY);
-	view.ReleaseDC(pDC);
+	m_View.ReleaseDC(pDC);
 }
 
-void CVADlg::RenderFrame(const cv::Mat& frame)
-{
-	RenderToView(m_ViewLive, frame);
-}
+// ── Timer (~30 fps) ───────────────────────────────────────────────────────────
 
 void CVADlg::OnTimer(UINT_PTR nIDEvent)
 {
@@ -371,10 +396,13 @@ void CVADlg::OnTimer(UINT_PTR nIDEvent)
 	CDialogEx::OnTimer(nIDEvent);
 }
 
+// ── Shutdown ──────────────────────────────────────────────────────────────────
+
 void CVADlg::OnDestroy()
 {
 	KillTimer(1);
-	StopCapture();
+	StopShmReader();   // joins background thread, closes m_shm
+	StopReceiver();    // terminates RTSPReceiver.exe
 	CDialogEx::OnDestroy();
 }
 
