@@ -126,6 +126,9 @@ void VLMInference::WorkerLoop()
             m_latestResult = std::move(r);
             m_hasNewResult = true;
         }
+
+        if (m_hNotifyWnd)
+            ::PostMessage(m_hNotifyWnd, WM_VLM_RESULT, 0, 0);
     }
 }
 

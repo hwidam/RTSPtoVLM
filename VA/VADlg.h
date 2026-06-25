@@ -33,21 +33,27 @@ protected:
 	afx_msg HCURSOR OnQueryDragIcon();
 	afx_msg void OnTimer(UINT_PTR nIDEvent);
 	afx_msg void OnDestroy();
+	afx_msg LRESULT OnVlmResult(WPARAM wParam, LPARAM lParam);
 	DECLARE_MESSAGE_MAP()
 
 public:
-	CStatic m_View;
+	CStatic m_ViewLive;
+	CStatic m_ViewResult;
+
 	VLMInference* m_pVLMInference = nullptr;
 	void InitVLM();
+	void InitControl();
 
 private:
 	void StartCapture(const std::string& url);
 	void StopCapture();
 	void CaptureLoop(const std::string& url);
+	void RenderToView(CStatic& view, const cv::Mat& frame);
 	void RenderFrame(const cv::Mat& frame);
 
 	std::thread        m_captureThread;
 	std::atomic<bool>  m_running{ false };
 	cv::Mat            m_frame;
 	std::mutex         m_frameMutex;
+public:
 };

@@ -65,7 +65,8 @@ CVADlg::CVADlg(CWnd* pParent /*=nullptr*/)
 void CVADlg::DoDataExchange(CDataExchange* pDX)
 {
 	CDialogEx::DoDataExchange(pDX);
-	DDX_Control(pDX, IDC_VIEW, m_View);
+	DDX_Control(pDX, IDC_VIEW_LIVE, m_ViewLive);
+	DDX_Control(pDX, IDC_VIEW_RESULT, m_ViewResult);
 }
 
 BEGIN_MESSAGE_MAP(CVADlg, CDialogEx)
@@ -74,6 +75,7 @@ BEGIN_MESSAGE_MAP(CVADlg, CDialogEx)
 	ON_WM_QUERYDRAGICON()
 	ON_WM_TIMER()
 	ON_WM_DESTROY()
+	ON_MESSAGE(WM_VLM_RESULT, &CVADlg::OnVlmResult)
 END_MESSAGE_MAP()
 
 
@@ -107,6 +109,8 @@ BOOL CVADlg::OnInitDialog()
 	//  프레임워크가 이 작업을 자동으로 수행합니다.
 	SetIcon(m_hIcon, TRUE);			// 큰 아이콘을 설정합니다.
 	SetIcon(m_hIcon, FALSE);		// 작은 아이콘을 설정합니다.
+
+	InitControl();
 
 	//ShowWindow(SW_MAXIMIZE);
 
@@ -187,6 +191,48 @@ HCURSOR CVADlg::OnQueryDragIcon()
 	return static_cast<HCURSOR>(m_hIcon);
 }
 
+void CVADlg::InitControl()
+{
+	const int nMargin  = 10;
+	const int nTitleH  = 20;
+
+	const int nViewLiveW   = 640;
+	const int nViewLiveH   = 360;
+
+	const int nViewResultW  = 640;
+	const int nViewResultH  = 360;
+	const int nEditResultH  = 60;
+
+	const int nGroupLiveX  = 7;
+	const int nGroupLiveY  = 7;
+	const int nGroupLiveW  = nMargin + nViewLiveW + nMargin;                           // 660
+	const int nGroupLiveH  = nTitleH + nViewLiveH + nMargin;                           // 390
+
+	const int nGroupResultX = nGroupLiveX + nGroupLiveW + nMargin;
+	const int nGroupResultY = nGroupLiveY;
+	const int nGroupResultW = nGroupLiveW;                                              // 660
+	const int nGroupResultH = nTitleH + nViewResultH + nMargin + nEditResultH + nMargin; // 460
+
+	GetDlgItem(IDC_GROUP_LIVE)->MoveWindow(nGroupLiveX, nGroupLiveY, nGroupLiveW, nGroupLiveH);
+	GetDlgItem(IDC_VIEW_LIVE)->MoveWindow(nGroupLiveX + nMargin, nGroupLiveY + nTitleH, nViewLiveW, nViewLiveH);
+
+	GetDlgItem(IDC_GROUP_RESULT)->MoveWindow(nGroupResultX, nGroupResultY, nGroupResultW, nGroupResultH);
+	GetDlgItem(IDC_VIEW_RESULT)->MoveWindow(nGroupResultX + nMargin, nGroupResultY + nTitleH, nViewResultW, nViewResultH);
+	GetDlgItem(IDC_EDIT_RESULT)->MoveWindow(nGroupResultX + nMargin, nGroupResultY + nTitleH + nViewResultH + nMargin, nViewResultW, nEditResultH);
+
+}
+
+LRESULT CVADlg::OnVlmResult(WPARAM, LPARAM)
+{
+	VLMInference::Result result;
+	if (m_pVLMInference && m_pVLMInference->TryGetResult(result))
+	{
+		RenderToView(m_ViewResult, result.image);
+		SetDlgItemTextA(this->m_hWnd, IDC_EDIT_RESULT, result.text.c_str());
+	}
+	return 0;
+}
+
 void CVADlg::InitVLM()
 {
 	m_pVLMInference = new VLMInference();
@@ -203,6 +249,7 @@ void CVADlg::InitVLM()
 		std::string modelPath = modelDir.string() + "llava-v1.6-mistral-7b.Q4_K_M.gguf";
 		std::string mmprojPath = modelDir.string() + "mmproj-model-f16.gguf";
 		m_pVLMInference->Init(modelPath, mmprojPath);
+		m_pVLMInference->SetNotifyWnd(GetSafeHwnd());
 	}
 }
 
@@ -272,11 +319,11 @@ void CVADlg::CaptureLoop(const std::string& url)
 	}
 }
 
-void CVADlg::RenderFrame(const cv::Mat& frame)
+void CVADlg::RenderToView(CStatic& view, const cv::Mat& frame)
 {
 	CRect rect;
-	m_View.GetClientRect(&rect);
-	if (rect.IsRectEmpty())
+	view.GetClientRect(&rect);
+	if (rect.IsRectEmpty() || frame.empty())
 		return;
 
 	// OpenCV Mat is BGR — same byte order Windows DIB expects, no conversion needed
@@ -290,13 +337,18 @@ void CVADlg::RenderFrame(const cv::Mat& frame)
 	bi.biBitCount    = 24;
 	bi.biCompression = BI_RGB;
 
-	CDC* pDC = m_View.GetDC();
+	CDC* pDC = view.GetDC();
 	StretchDIBits(pDC->GetSafeHdc(),
 		0, 0, rect.Width(), rect.Height(),
 		0, 0, src.cols, src.rows,
 		src.data, reinterpret_cast<BITMAPINFO*>(&bi),
 		DIB_RGB_COLORS, SRCCOPY);
-	m_View.ReleaseDC(pDC);
+	view.ReleaseDC(pDC);
+}
+
+void CVADlg::RenderFrame(const cv::Mat& frame)
+{
+	RenderToView(m_ViewLive, frame);
 }
 
 void CVADlg::OnTimer(UINT_PTR nIDEvent)

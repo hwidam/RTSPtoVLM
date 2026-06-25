@@ -1,4 +1,6 @@
 #pragma once
+#define WM_VLM_RESULT  (WM_APP + 1)
+
 #include <opencv2/opencv.hpp>
 #include <string>
 #include <queue>
@@ -43,6 +45,8 @@ public:
     bool IsReady()   const { return m_ready; }
     bool IsBusy()    const { return m_busy; }
 
+    void SetNotifyWnd(HWND hwnd) { m_hNotifyWnd = hwnd; }
+
     // Enqueue a frame+prompt for inference.
     // If a request is already waiting, it is replaced with the new one (keep only latest).
     void Push(const cv::Mat& frame, const std::string& prompt);
@@ -77,4 +81,6 @@ private:
     Result                  m_latestResult;
     std::mutex              m_resultMutex;
     std::atomic<bool>       m_hasNewResult{ false };
+
+    HWND                    m_hNotifyWnd{ nullptr };
 };
