@@ -18,11 +18,13 @@ public:
     struct Request {
         cv::Mat     frame;
         std::string prompt;
+        uint64_t    timestamp = 0; // ms epoch from ShmFrameHeader, carried through to Result
     };
 
     struct Result {
-        cv::Mat     image;  // original frame (unchanged)
-        std::string text;   // generated response
+        cv::Mat     image;         // original frame (unchanged)
+        std::string text;          // generated response
+        uint64_t    timestamp = 0; // ms epoch of the source frame
     };
 
     VLMInference() = default;
@@ -49,7 +51,7 @@ public:
 
     // Enqueue a frame+prompt for inference.
     // If a request is already waiting, it is replaced with the new one (keep only latest).
-    void Push(const cv::Mat& frame, const std::string& prompt);
+    void Push(const cv::Mat& frame, const std::string& prompt, uint64_t timestamp = 0);
 
     // Non-blocking. Returns true and moves the result out if a new one is available.
     bool TryGetResult(Result& out);

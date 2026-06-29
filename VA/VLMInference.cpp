@@ -79,14 +79,14 @@ bool VLMInference::Init(const std::string& modelPath,
 
 // ─── Push / TryGetResult ─────────────────────────────────────────────────────
 
-void VLMInference::Push(const cv::Mat& frame, const std::string& prompt)
+void VLMInference::Push(const cv::Mat& frame, const std::string& prompt, uint64_t timestamp)
 {
     {
         std::lock_guard<std::mutex> lock(m_queueMutex);
         // Discard any pending request — keep only the most recent frame
         while (!m_inputQueue.empty())
             m_inputQueue.pop();
-        m_inputQueue.push({ frame.clone(), prompt });
+        m_inputQueue.push({ frame.clone(), prompt, timestamp });
     }
     m_queueCv.notify_one();
 }
@@ -119,6 +119,7 @@ void VLMInference::WorkerLoop()
 
         m_busy = true;
         Result r = Infer(req.frame, req.prompt);
+        r.timestamp = req.timestamp;
         m_busy   = false;
 
         {

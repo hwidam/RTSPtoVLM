@@ -74,9 +74,9 @@ BEGIN_MESSAGE_MAP(CVADlg, CDialogEx)
 	ON_WM_SYSCOMMAND()
 	ON_WM_PAINT()
 	ON_WM_QUERYDRAGICON()
-	ON_WM_TIMER()
 	ON_WM_DESTROY()
-	ON_MESSAGE(WM_VLM_RESULT, &CVADlg::OnVlmResult)
+	ON_MESSAGE(WM_RENDER_FRAME, &CVADlg::OnRenderFrame)
+	ON_MESSAGE(WM_VLM_RESULT,   &CVADlg::OnVlmResult)
 END_MESSAGE_MAP()
 
 
@@ -133,7 +133,7 @@ BOOL CVADlg::OnInitDialog()
 
 			LaunchReceiver(url, shmName);
 			StartShmReader(shmName);
-			SetTimer(1, 33, nullptr); // ~30 fps render timer
+			m_renderThread = std::thread([this] { RenderLoop(); });
 		}
 	}
 	else
@@ -277,8 +277,17 @@ void CVADlg::ShmReadLoop(const std::string& shmName)
 		cv::Mat received(h->height, h->width, CV_8UC3,
 		                 pkt.data + sizeof(ShmFrameHeader));
 
-		std::lock_guard<std::mutex> lock(m_frameMutex);
-		received.copyTo(m_frame);
+		const uint64_t nowMs = (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
+		    std::chrono::system_clock::now().time_since_epoch()).count();
+		m_timeDiffMs = (int64_t)(nowMs - h->timestamp);
+
+		{
+			std::lock_guard<std::mutex> lock(m_frameMutex);
+			received.copyTo(m_frame);
+			m_frameTimestamp = h->timestamp;
+			m_frameReady = true;
+		}
+		m_frameCv.notify_one();
 	}
 
 	m_shm.Close();
@@ -290,29 +299,33 @@ void CVADlg::InitControl()
 	const int nMargin  = 10;
 	const int nTitleH  = 20;
 
-	const int nViewLiveW   = 640;
-	const int nViewLiveH   = 360;
+	const int nViewLiveW       = 640;
+	const int nViewLiveH       = 360;
+	const int nStaticTimeDiffH = 20;
 
-	const int nViewResultW  = 640;
-	const int nViewResultH  = 360;
-	const int nEditResultH  = 60;
+	const int nViewResultW          = 640;
+	const int nViewResultH          = 360;
+	const int nStaticResultTimeDiffH = 20;
+	const int nEditResultH          = 60;
 
 	const int nGroupLiveX  = 7;
 	const int nGroupLiveY  = 7;
-	const int nGroupLiveW  = nMargin + nViewLiveW + nMargin;                           // 660
-	const int nGroupLiveH  = nTitleH + nViewLiveH + nMargin;                           // 390
+	const int nGroupLiveW  = nMargin + nViewLiveW + nMargin;                                                                     // 660
+	const int nGroupLiveH  = nTitleH + nViewLiveH + nMargin + nStaticTimeDiffH + nMargin;                                        // 420
 
 	const int nGroupResultX = nGroupLiveX + nGroupLiveW + nMargin;
 	const int nGroupResultY = nGroupLiveY;
-	const int nGroupResultW = nGroupLiveW;                                              // 660
-	const int nGroupResultH = nTitleH + nViewResultH + nMargin + nEditResultH + nMargin; // 460
+	const int nGroupResultW = nGroupLiveW;                                                                                        // 660
+	const int nGroupResultH = nTitleH + nViewResultH + nMargin + nStaticResultTimeDiffH + nMargin + nEditResultH + nMargin;       // 480
 
 	GetDlgItem(IDC_GROUP_LIVE)->MoveWindow(nGroupLiveX, nGroupLiveY, nGroupLiveW, nGroupLiveH);
 	GetDlgItem(IDC_VIEW_LIVE)->MoveWindow(nGroupLiveX + nMargin, nGroupLiveY + nTitleH, nViewLiveW, nViewLiveH);
+	GetDlgItem(IDC_STATIC_LIVE_TIMEDIFF)->MoveWindow(nGroupLiveX + nMargin, nGroupLiveY + nTitleH + nViewLiveH + nMargin, nViewLiveW, nStaticTimeDiffH);
 
 	GetDlgItem(IDC_GROUP_RESULT)->MoveWindow(nGroupResultX, nGroupResultY, nGroupResultW, nGroupResultH);
 	GetDlgItem(IDC_VIEW_RESULT)->MoveWindow(nGroupResultX + nMargin, nGroupResultY + nTitleH, nViewResultW, nViewResultH);
-	GetDlgItem(IDC_EDIT_RESULT)->MoveWindow(nGroupResultX + nMargin, nGroupResultY + nTitleH + nViewResultH + nMargin, nViewResultW, nEditResultH);
+	GetDlgItem(IDC_STATIC_RESULT_TIMEDIFF)->MoveWindow(nGroupResultX + nMargin, nGroupResultY + nTitleH + nViewResultH + nMargin, nViewResultW, nStaticResultTimeDiffH);
+	GetDlgItem(IDC_EDIT_RESULT)->MoveWindow(nGroupResultX + nMargin, nGroupResultY + nTitleH + nViewResultH + nMargin + nStaticResultTimeDiffH + nMargin, nViewResultW, nEditResultH);
 
 }
 
@@ -323,6 +336,12 @@ LRESULT CVADlg::OnVlmResult(WPARAM, LPARAM)
 	{
 		RenderToView(m_ViewResult, result.image);
 		SetDlgItemTextA(this->m_hWnd, IDC_EDIT_RESULT, result.text.c_str());
+
+		const uint64_t nowMs = (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
+		    std::chrono::system_clock::now().time_since_epoch()).count();
+		char buf[64];
+		snprintf(buf, sizeof(buf), "TimeDiff: %lld (ms)", (long long)(nowMs - result.timestamp));
+		SetDlgItemTextA(m_hWnd, IDC_STATIC_RESULT_TIMEDIFF, buf);
 	}
 	return 0;
 }
@@ -347,6 +366,58 @@ void CVADlg::InitVLM()
 	}
 }
 
+
+// ── Render thread ─────────────────────────────────────────────────────────────
+
+void CVADlg::RenderLoop()
+{
+	while (m_running)
+	{
+		std::unique_lock<std::mutex> lock(m_frameMutex);
+		m_frameCv.wait(lock, [this] { return m_frameReady || !m_running; });
+		if (!m_running) break;
+		m_frameReady = false;
+		lock.unlock();
+
+		TriggerRedraw();
+	}
+}
+
+void CVADlg::TriggerRedraw()
+{
+	// Windows: marshal to UI thread via message pump.
+	// Future Qt/Linux: replace with QMetaObject::invokeMethod or emit signal.
+	if (!m_renderPending.exchange(true))
+		PostMessage(WM_RENDER_FRAME);
+}
+
+LRESULT CVADlg::OnRenderFrame(WPARAM, LPARAM)
+{
+	m_renderPending = false;
+
+	cv::Mat  frame;
+	uint64_t frameTs = 0;
+	{
+		std::lock_guard<std::mutex> lock(m_frameMutex);
+		if (!m_frame.empty()) {
+			m_frame.copyTo(frame);
+			frameTs = m_frameTimestamp;
+		}
+	}
+	if (!frame.empty())
+	{
+		if (m_pVLMInference && m_pVLMInference->IsReady() && !m_pVLMInference->IsBusy())
+			m_pVLMInference->Push(frame, "write text written on image", frameTs);
+		RenderToView(m_ViewLive, frame);
+
+		char buf[64];
+		snprintf(buf, sizeof(buf), "TimeDiff: %lld (ms)", (long long)m_timeDiffMs.load());
+		SetDlgItemTextA(m_hWnd, IDC_STATIC_LIVE_TIMEDIFF, buf);
+	}
+	return 0;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 void CVADlg::RenderToView(CStatic& view, const cv::Mat& frame)
 {
@@ -377,36 +448,16 @@ void CVADlg::RenderToView(CStatic& view, const cv::Mat& frame)
 
 
 
-// ── Timer (~30 fps) ───────────────────────────────────────────────────────────
-
-void CVADlg::OnTimer(UINT_PTR nIDEvent)
-{
-	if (nIDEvent == 1)
-	{
-		cv::Mat frame;
-		{
-			std::lock_guard<std::mutex> lock(m_frameMutex);
-			if (!m_frame.empty())
-				m_frame.copyTo(frame);
-		}
-		if (!frame.empty())
-		{
-			if (m_pVLMInference && m_pVLMInference->IsReady() && !m_pVLMInference->IsBusy())
-				m_pVLMInference->Push(frame, "write text written on image");
-
-			RenderToView(m_ViewLive, frame);
-		}
-	}
-	CDialogEx::OnTimer(nIDEvent);
-}
-
 // ── Shutdown ──────────────────────────────────────────────────────────────────
 
 void CVADlg::OnDestroy()
 {
-	KillTimer(1);
-	StopShmReader();   // joins background thread, closes m_shm
-	StopReceiver();    // terminates RTSPReceiver.exe
+	m_running = false;
+	m_frameCv.notify_all();                      // wake render thread so it can exit
+	if (m_renderThread.joinable())
+		m_renderThread.join();
+	StopShmReader();                             // joins SHM thread, closes m_shm
+	StopReceiver();                              // terminates RTSPReceiver.exe
 	CDialogEx::OnDestroy();
 }
 
