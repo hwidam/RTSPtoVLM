@@ -1,6 +1,7 @@
 # RTSPtoVLM
 https://github.com/hwidam/RTSPtoVLM
 - 2026.06.21 ~
+- 2026.07.01 ~ 2026.07.16 Vacation
 ## 1. Overview
 Receive RTSP stream data, decode, apply VLM, extract Data from Image
 - build a working skeleton in the overview stage for testing
