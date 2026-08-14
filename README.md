@@ -1,12 +1,10 @@
 # RTSPtoVLM
 https://github.com/hwidam/RTSPtoVLM
-- 2026.06.21 ~
-- 2026.07.01 ~ 2026.07.16 Vacation
-- ~ 2026.08.10 Project Halt
-- 2026.08.14 Project Resume
+
+**Status:** Active development
 
 ## 1. Overview
-Receive RTSP stream data, decode, apply VLM, extract Data from Image
+Receive RTSP stream data, decode, detect objects of interest with YOLO, apply VLM to those frames, extract Data from Image
 - build a working skeleton in the overview stage for testing
 - then decouple the processes to enhance each component individually.
 
@@ -31,10 +29,16 @@ Receive RTSP stream data, decode, apply VLM, extract Data from Image
 - **RTSPReceiver** is launched as a child process by VA on startup (`CreateProcess`)
 - **SharedMemory** ring buffer lives in `common.dll`; both processes link against it
 - **ShmFrameHeader** (width, height, stride, format, pts, timestamp) prefixes each frame payload
-- **YOLOInference** runs on every reconstructed frame and acts as a gate in front of the VLM: only frames containing a detection class of interest (configurable) are forwarded to `VLMInference::Push`, so the heavier VLM pass isn't run on empty/uninteresting frames
+- **YOLOInference** *(planned — not yet implemented, diagram shows target design)* runs on every reconstructed frame and acts as a gate in front of the VLM: only frames containing a detection class of interest (configurable) are forwarded to `VLMInference::Push`, so the heavier VLM pass isn't run on empty/uninteresting frames
 - Detection boxes from YOLOInference are drawn onto the frame in `RenderFrame`, independent of whether that frame was forwarded to the VLM
 
-## 3. Tech Stack
+## 3. Demo / Results
+_TODO — add once each stage has visible output:_
+- Sample frame with YOLO detection boxes
+- Sample VLM output (prompt + generated text) for a detected frame
+- Rough fps / latency numbers for the full pipeline (capture -> YOLO -> VLM -> render)
+
+## 4. Tech Stack
 ### Language
 - C++
 ### Framework
