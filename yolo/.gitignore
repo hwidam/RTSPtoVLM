@@ -1,0 +1,7 @@
+# Model weights and training artifacts -- large binaries, not source.
+train/.venv/
+train/runs/
+train/dataset/
+*.pt
+*.onnx
+!inference/models/.gitkeep

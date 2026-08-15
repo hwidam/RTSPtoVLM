@@ -1,0 +1,10 @@
+# Ultralytics dataset config.
+# path: root dir containing train/val image+label folders (YOLO txt format)
+# See: https://docs.ultralytics.com/datasets/detect/
+path: ./dataset
+train: images/train
+val: images/val
+
+# TODO: replace with the classes relevant to this project's RTSP feeds
+names:
+  0: person
